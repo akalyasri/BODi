@@ -1,17 +1,18 @@
-import inspect
-import pickle
-import time
-import warnings
-from copy import deepcopy
-from typing import Dict, Optional, Union
+import inspect  # For retrieving information about live objects like functions and their arguments
+import pickle    # For serializing and deserializing objects to save experiment data
+import time     # Measuring execution time
+import warnings     # To suppress warnings during execution
+from copy import deepcopy   # For creating deep copies of complex objects
+from typing import Dict, Optional, Union #For better code readability
 
-import torch
-from torch import Tensor
-from torch.quasirandom import SobolEngine
+import torch    # For tensor computations
+from torch import Tensor    
+from torch.quasirandom import SobolEngine   # For generating quasi-random numbers
 
 #from botorch import fit_gpytorch_model // error 1: cannot import name 'fit_gpytorch_model' from 'botorch' - suggests fit_gpytorch_mll instead
 from botorch import fit_gpytorch_mll #error 2: ImportError: attempted relative import with no known parent package
 
+# Import optimization and modeling utilities from BoTorch and GPyTorch libraries
 from botorch.acquisition import qExpectedImprovement
 from botorch.acquisition.analytic import ExpectedImprovement
 from botorch.acquisition.multi_objective.monte_carlo import qNoisyExpectedHypervolumeImprovement
@@ -35,16 +36,28 @@ from optimize import optimize_acq_function_mixed_alternating, optimize_acqf_bina
 from test_functions import LABS, SVM, Ackley53, MaxSAT60
 
 
+# This function arranges multiple independent runs of a Bayesian optimization experiment 
+# and returns experiment data (Xs, Ys, metadata) and optionally saves them to a file
 def run_experiment(
-    n_replications: int, base_seed: int = 1234, save_to_pickle: bool = True, fname: Optional[str] = None, **kwargs,
+    n_replications: int,  # number of independent experiment repetitions
+    base_seed: int = 1234,  # base seed for reproducibility across repetitions
+    save_to_pickle: bool = True,  # whether to save results to a pickle file
+    fname: Optional[str] = None,  # optional custom filename for saving results
+    **kwargs,  # additional experiment parameters passed as a dictionary
 ) -> Dict[str, Union[str, Optional[Tensor]]]:
-    Xs, Ys, metadata = [], [], []
-    for i in range(n_replications):
-        print(f"=== Replication {i + 1}/{n_replications} ===")
-        X, Y, meta = _run_single_trial(torch_seed=base_seed + i, **kwargs)
-        print(f"best value = {torch.max(Y):.3f}")
-        if save_to_pickle:
-            fname = (
+    
+    Xs, Ys, metadata = [], [], [] # lists to collect input points, outcomes, and metadata for all runs
+
+    for i in range(n_replications): # loop over the number of replications
+        
+        print(f"=== Replication {i + 1}/{n_replications} ===") # progress tracking
+        X, Y, meta = _run_single_trial(torch_seed=base_seed + i, **kwargs) # single experiment trial
+        print(f"best value = {torch.max(Y):.3f}") # print the best outcome observed in this trial
+        
+        if save_to_pickle:  # save intermediate results if required
+            
+            # constructing a default filename if none is provided
+            fname = (   
                 fname
                 or "./"
                 + kwargs["evalfn"]
@@ -56,15 +69,16 @@ def run_experiment(
                 + str(kwargs["batch_size"])
                 + ".pkl"
             )
-            pickle.dump((Xs, Ys, metadata), open(fname, "wb"))
-            print(f"Results saved to: {fname}")
+            pickle.dump((Xs, Ys, metadata), open(fname, "wb"))  # save data using pickle
+            print(f"Results saved to: {fname}") # printing save location
 
-        Xs.append(X)
-        Ys.append(Y)
-        metadata.append(meta)
-    Xs, Ys = torch.stack(Xs), torch.stack(Ys)
+        Xs.append(X)    # collect input points from this trial
+        Ys.append(Y)    # collect oucomes from this trial
+        metadata.append(meta)   # collect trial specific metadata
 
-    if save_to_pickle:
+    Xs, Ys = torch.stack(Xs), torch.stack(Ys)   # combine data from all trials into tensors
+
+    if save_to_pickle:  # repeat saving after all trials
         fname = (
             fname
             or "./"
@@ -77,30 +91,34 @@ def run_experiment(
             + str(kwargs["batch_size"])
             + ".pkl"
         )
+
         pickle.dump((Xs, Ys, metadata), open(fname, "wb"))
         print(f"Results saved to: {fname}")
-    return Xs, Ys, metadata
+
+    return Xs, Ys, metadata # return the collected data
 
 
 def _run_single_trial(
-    torch_seed: int,
-    evalfn: str,
-    max_evals: int,
-    n_initial_points: int,
-    batch_size: int = 1,
-    n_binary: int = 0,
-    n_categorical: int = 0,
-    n_continuous: int = 0,
-    init_with_k_spaced_binary_sobol: bool = True,
-    n_prototype_vectors: int = 10,
-    verbose: bool = False,
-    feature_costs: Optional[Tensor] = None,
+    torch_seed: int,  # seed for reproducibility
+    evalfn: str,  # name of the evaluation function 
+    max_evals: int,  # max num of function evaluations
+    n_initial_points: int,  # num of initial samples for the optimization
+    batch_size: int = 1,  # num of points to evaluate in each iteration
+    n_binary: int = 0,  # num of binary parameters in the search space
+    n_categorical: int = 0,  # num of categorical parameters
+    n_continuous: int = 0,  # num of continuous parameters
+    init_with_k_spaced_binary_sobol: bool = True,  # custom initialization 
+    n_prototype_vectors: int = 10,  # num of prototype vectors for the custom kernel
+    verbose: bool = False,  #verbose mode - helps debugging
+    feature_costs: Optional[Tensor] = None,  # feature costs for multi-objective evaluation
 ) -> Dict[str, Union[str, Optional[Tensor]]]:
+    
     _run_single_trial_input_kwargs = deepcopy(inspect.getargvalues(inspect.currentframe())[-1])
     start_time = time.time()
     torch.manual_seed(torch_seed)  # For reproducibility
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tkwargs = {"dtype": torch.double, "device": device}
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # use GPU if available
+    tkwargs = {"dtype": torch.double, "device": device} # tensor options for computation
+    
     if verbose:
         print(tkwargs)
 
@@ -109,16 +127,19 @@ def _run_single_trial(
         assert n_continuous == 0, "LABS has no continuous parameters"
         assert n_binary > 0, "LABS need a non-zero number of binary parameters"
         f = LABS(n_binary=n_binary, **tkwargs)
+
     elif evalfn == "MaxSAT60":
         f = MaxSAT60(n_binary=n_binary, **tkwargs)
         assert n_binary == 60, "MaxSAT60 defined for 60 binary variables"
         assert n_categorical == 0, "MaxSAT60 has no categorical parameters"
         assert n_continuous == 0, "MaxSAT60 has no continuous parameters"
+
     elif evalfn == "Ackley53":
         f = Ackley53(**tkwargs)
         assert n_binary == 50, "Ackley53 defined for 50 binary variables"
         assert n_continuous == 3, "Ackley53 defined for 3 continuous variables"
         assert n_categorical == 0, "Ackley53 has no categorical parameters"
+
     elif evalfn == "SVM":
         assert feature_costs is not None
         f = SVM(n_features=n_binary, feature_costs=feature_costs)
@@ -126,11 +147,13 @@ def _run_single_trial(
         assert n_binary > 0, "SVM defined for >0 binary variables"
         assert n_continuous == 3, "SVM defined for 3 continuous variables"
         assert n_categorical == 0, "SVM has no categorical parameters"
+
     else:
-        raise ValueError(f"Unknown evalfn {evalfn}")
+        raise ValueError(f"Unknown evalfn {evalfn}")   # handle invalid inputs  
 
     # Get initial Sobol points
     X = SobolEngine(dimension=f.dim, scramble=True, seed=torch_seed).draw(n_initial_points).to(**tkwargs)
+    
     if init_with_k_spaced_binary_sobol:
         X[:, f.binary_inds] = 0
         with torch.random.fork_rng():
@@ -151,7 +174,7 @@ def _run_single_trial(
         "n_initial_candts": 2000,
         "n_restarts": 20,
         "afo_init_design": "random",
-        "n_alternate_steps": 50,
+        "n_alternate_steps": 50,    
         "num_cmaes_steps": 50,
         "num_ls_steps": 50,
         "n_spray_points": 200,
