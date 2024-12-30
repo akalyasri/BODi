@@ -1,3 +1,9 @@
+# This code implements a framework for running BO experiemnts designed for evaluating black-box functions 
+# under different configurations. It supports multiple evaluation functions such as LABS, MaxSAT60, Ackley53, 
+# and SVM, each with specific constraints on binary, categorical, and continuous parameters.
+
+# How to modify the code so it fits our needs?
+
 import inspect  # For retrieving information about live objects like functions and their arguments
 import pickle    # For serializing and deserializing objects to save experiment data
 import time     # Measuring execution time
